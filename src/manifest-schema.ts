@@ -37,6 +37,6 @@ export const manifestSchema = {
       },
     },
   },
-};
+} as const;
 
 export default manifestSchema;

@@ -1,28 +1,33 @@
 {
   "name": "@yrchat/plugin-vite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vite build integration for YRChat WASM plugins",
   "license": "MIT",
   "type": "module",
-  "main": "./index.js",
-  "types": "./index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "import": "./index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
-    "./manifest-schema": "./manifest-schema.js"
+    "./manifest-schema": {
+      "types": "./dist/manifest-schema.d.ts",
+      "import": "./dist/manifest-schema.js"
+    }
   },
   "files": [
-    "index.js",
-    "index.d.ts",
-    "manifest-schema.js",
+    "dist",
+    "src",
+    "tsconfig.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test",
-    "check": "node --check index.js && node --test",
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm build && node --test",
+    "check": "pnpm build && node --test",
+    "prepare": "pnpm build",
     "prepublishOnly": "pnpm check"
   },
   "dependencies": {
@@ -31,6 +36,11 @@
   },
   "peerDependencies": {
     "vite": ">=5 <9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
   },
   "engines": {
     "node": ">=18"

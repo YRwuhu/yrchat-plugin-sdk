@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { validateManifest } from '../index.js';
+import { validateManifest } from '../dist/index.js';
 
 const validManifest = {
   id: 'dev.yrchat.test',
