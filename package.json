@@ -1,6 +1,6 @@
 {
   "name": "@yrchat/plugin-vite",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Vite build integration for YRChat WASM plugins",
   "license": "MIT",
   "type": "module",
@@ -24,9 +24,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsdown",
+    "lint": "oxlint src tests",
     "test": "pnpm build && node --test",
-    "check": "pnpm build && node --test",
+    "check": "pnpm lint && pnpm build && node --test",
+    "prepare": "pnpm build",
     "prepublishOnly": "pnpm check"
   },
   "dependencies": {
@@ -38,7 +40,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^7.0.2",
+    "oxlint": "^1.0.0",
+    "tsdown": "^0.15.0",
+    "typescript": "5.9.3",
     "vite": "^8.1.5"
   },
   "engines": {
