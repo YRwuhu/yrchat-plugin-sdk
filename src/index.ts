@@ -34,7 +34,8 @@ interface PluginManifest {
   id: string;
   version: string;
   entry: string;
-  api_version: 1 | 2;
+  api_version: 1;
+  runtime?: { frontend?: 'yrchat-react@1' };
 }
 
 interface CargoTarget {
@@ -100,6 +101,19 @@ async function collectFiles(root: string): Promise<Zippable> {
   return files;
 }
 
+async function assertExternalReact(buildRoot: string): Promise<void> {
+  const files = await collectFiles(join(buildRoot, 'ui'));
+  for (const [name, value] of Object.entries(files)) {
+    if (!name.endsWith('.js')) continue;
+    const bytes = Array.isArray(value) ? value[0] : value;
+    const source = new TextDecoder().decode(bytes as Uint8Array);
+    if (source.includes('__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE')
+      || source.includes('__REACT_DEVTOOLS_GLOBAL_HOOK__')) {
+      throw new Error(`Plugin bundle ${name} contains a private React runtime; React must remain external`);
+    }
+  }
+}
+
 function safeProjectPath(root: string, candidate: string, label: string): string {
   const resolved = resolve(root, candidate);
   const relativePath = relative(root, resolved);
@@ -132,7 +146,17 @@ export default function yrchatPlugin(options: YrchatPluginOptions = {}): Plugin 
       await validateManifest(manifestPath);
       if (command !== 'build') return undefined;
       const buildRoot = safeProjectPath(root, buildDirectoryName, 'buildDir');
-      return { build: { outDir: join(buildRoot, 'ui'), emptyOutDir: true } };
+      const manifest = await validateManifest(manifestPath);
+      const reactExternal = manifest.runtime?.frontend === 'yrchat-react@1'
+        ? ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom', 'react-dom/client']
+        : [];
+      return {
+        build: {
+          outDir: join(buildRoot, 'ui'),
+          emptyOutDir: true,
+          rollupOptions: { external: reactExternal },
+        },
+      };
     },
     async closeBundle() {
       if (command !== 'build') return;
@@ -141,6 +165,7 @@ export default function yrchatPlugin(options: YrchatPluginOptions = {}): Plugin 
       const buildRoot = safeProjectPath(root, buildDirectoryName, 'buildDir');
       const outputRoot = safeProjectPath(root, options.outputDir ?? 'dist', 'outputDir');
       const manifest = await validateManifest(manifestPath);
+      if (manifest.runtime?.frontend === 'yrchat-react@1') await assertExternalReact(buildRoot);
       const metadata = await cargoMetadata(cratePath, root);
       const cratePackage = metadata.packages.find(
         (item) => resolve(item.manifest_path) === resolve(cratePath),
