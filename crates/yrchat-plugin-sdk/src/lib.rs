@@ -165,18 +165,19 @@ macro_rules! export_plugin {
     ($plugin:ty) => {
         struct YrchatGuest;
 
-        std::thread_local! {
-            static YRCHAT_PLUGIN_RUNTIME: std::cell::RefCell<$crate::Runtime<$plugin>> =
-                std::cell::RefCell::new($crate::Runtime::default());
+        static mut YRCHAT_PLUGIN_RUNTIME: Option<$crate::Runtime<$plugin>> = None;
+
+        fn yrchat_plugin_runtime() -> &'static mut $crate::Runtime<$plugin> {
+            unsafe { YRCHAT_PLUGIN_RUNTIME.get_or_insert_with($crate::Runtime::default) }
         }
 
         impl $crate::Guest for YrchatGuest {
             fn invoke(request: $crate::Invocation) -> $crate::Response {
-                YRCHAT_PLUGIN_RUNTIME.with(|runtime| runtime.borrow_mut().invoke(request))
+                yrchat_plugin_runtime().invoke(request)
             }
 
             fn resume(effect_id: u64, result: $crate::HostResult) -> $crate::Response {
-                YRCHAT_PLUGIN_RUNTIME.with(|runtime| runtime.borrow_mut().resume(effect_id, result))
+                yrchat_plugin_runtime().resume(effect_id, result)
             }
         }
 
