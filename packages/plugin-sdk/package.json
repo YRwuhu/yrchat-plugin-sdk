@@ -1,0 +1,45 @@
+{
+  "name": "@yrchat/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Typed host bridge for YRChat plugin UIs",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "lint": "oxlint src tests",
+    "test": "pnpm build && node --test",
+    "check": "pnpm lint && pnpm build && node --test",
+    "prepare": "pnpm build",
+    "prepublishOnly": "pnpm check"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "oxlint": "^1.0.0",
+    "tsdown": "^0.15.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@11.8.0"
+}

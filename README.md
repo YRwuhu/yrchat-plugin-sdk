@@ -1,6 +1,19 @@
 # YRChat Plugin SDK
 
-This repository contains `@yrchat/plugin-vite` and the `yrchat-plugin-sdk` Rust crate.
+This repository contains `@yrchat/plugin-vite`, the browser-side `@yrchat/plugin-sdk`, and the `yrchat-plugin-sdk` Rust crate.
+
+Plugin UIs use the separate `@yrchat/plugin-sdk` package instead of depending on Tauri APIs directly:
+
+```ts
+import { createPluginClient } from '@yrchat/plugin-sdk';
+
+const host = createPluginClient('dev.example.my-plugin');
+const result = await host.invoke<{ value: string }>('start', { difficulty: 'easy' });
+await host.close();
+```
+
+Pass a `fallback` adapter to `createPluginClient` when the UI needs mock behavior in a
+regular browser during development. The adapter is ignored when the UI runs in YRChat.
 
 ```ts
 import { defineConfig } from 'vite';
