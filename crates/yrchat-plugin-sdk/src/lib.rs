@@ -124,9 +124,11 @@ impl<P: Plugin> Runtime<P> {
         let response = if request.operation == "__resume" {
             let resume = match serde_json::from_value::<ResumePayload>(request.payload) {
                 Ok(resume) => resume,
-                Err(error) => return WireResponse::Error {
-                    message: format!("Invalid host resume payload: {error}"),
-                },
+                Err(error) => {
+                    return WireResponse::Error {
+                        message: format!("Invalid host resume payload: {error}"),
+                    }
+                }
             };
             let Some(continuation) = self.pending.remove(&resume.effect_id) else {
                 return WireResponse::Error {
@@ -257,29 +259,60 @@ mod tests {
     #[test]
     fn resumes_concurrent_effects_out_of_order() {
         let mut runtime = Runtime::<TestPlugin>::default();
-        let first = runtime.dispatch(PluginRequest { operation: "first".into(), payload: json!({}) });
-        let second = runtime.dispatch(PluginRequest { operation: "second".into(), payload: json!({}) });
-        let first_id = match first { WireResponse::Effect { effect } => effect.effect_id, _ => panic!() };
-        let second_id = match second { WireResponse::Effect { effect } => effect.effect_id, _ => panic!() };
+        let first = runtime.dispatch(PluginRequest {
+            operation: "first".into(),
+            payload: json!({}),
+        });
+        let second = runtime.dispatch(PluginRequest {
+            operation: "second".into(),
+            payload: json!({}),
+        });
+        let first_id = match first {
+            WireResponse::Effect { effect } => effect.effect_id,
+            _ => panic!(),
+        };
+        let second_id = match second {
+            WireResponse::Effect { effect } => effect.effect_id,
+            _ => panic!(),
+        };
         let resumed = runtime.dispatch(PluginRequest {
             operation: "__resume".into(),
             payload: json!({ "effect_id": second_id, "result": { "ok": true, "value": 2 } }),
         });
-        assert!(matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "second"));
+        assert!(
+            matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "second")
+        );
         let resumed = runtime.dispatch(PluginRequest {
             operation: "__resume".into(),
             payload: json!({ "effect_id": first_id, "result": { "ok": true, "value": 1 } }),
         });
-        assert!(matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "first"));
+        assert!(
+            matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "first")
+        );
     }
 
     #[test]
     fn rejects_reused_effect_ids() {
         let mut runtime = Runtime::<TestPlugin>::default();
-        let response = runtime.dispatch(PluginRequest { operation: "once".into(), payload: json!({}) });
-        let id = match response { WireResponse::Effect { effect } => effect.effect_id, _ => panic!() };
+        let response = runtime.dispatch(PluginRequest {
+            operation: "once".into(),
+            payload: json!({}),
+        });
+        let id = match response {
+            WireResponse::Effect { effect } => effect.effect_id,
+            _ => panic!(),
+        };
         let payload = json!({ "effect_id": id, "result": { "ok": true } });
-        let _ = runtime.dispatch(PluginRequest { operation: "__resume".into(), payload: payload.clone() });
-        assert!(matches!(runtime.dispatch(PluginRequest { operation: "__resume".into(), payload }), WireResponse::Error { .. }));
+        let _ = runtime.dispatch(PluginRequest {
+            operation: "__resume".into(),
+            payload: payload.clone(),
+        });
+        assert!(matches!(
+            runtime.dispatch(PluginRequest {
+                operation: "__resume".into(),
+                payload
+            }),
+            WireResponse::Error { .. }
+        ));
     }
 }
