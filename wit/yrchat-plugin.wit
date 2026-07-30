@@ -1,0 +1,73 @@
+package yrchat:plugin@1.0.0;
+
+interface protocol {
+    record invocation {
+        operation: string,
+        payload: list<u8>,
+    }
+
+    record ai-chat-request {
+        system: string,
+        user: string,
+        use-character: bool,
+    }
+
+    record ai-vision-request {
+        system: string,
+        user: string,
+        image: list<u8>,
+    }
+
+    record character-profile-request {
+        emotion: option<string>,
+    }
+
+    record character-emotion-request {
+        emotion: string,
+    }
+
+    record network-request {
+        url: string,
+        method: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+    }
+
+    variant host-request {
+        ai-chat(ai-chat-request),
+        ai-vision(ai-vision-request),
+        character-profile(character-profile-request),
+        character-emotion(character-emotion-request),
+        network(network-request),
+        private-storage-get(string),
+        private-storage-set(tuple<string, list<u8>>),
+        provider(tuple<string, list<u8>>),
+    }
+
+    record effect {
+        id: u64,
+        request: host-request,
+    }
+
+    variant response {
+        complete(list<u8>),
+        effect(effect),
+        error(string),
+    }
+
+    variant host-result {
+        ok(list<u8>),
+        error(string),
+    }
+}
+
+interface guest {
+    use protocol.{invocation, response, host-result};
+
+    invoke: func(request: invocation) -> response;
+    resume: func(effect-id: u64, outcome: host-result) -> response;
+}
+
+world yrchat-plugin {
+    export guest;
+}

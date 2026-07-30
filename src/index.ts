@@ -176,17 +176,15 @@ export default function yrchatPlugin(options: YrchatPluginOptions = {}): Plugin 
       const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
       await run(
         cargo,
-        ['build', '--manifest-path', cratePath, '--target', 'wasm32-unknown-unknown', '--release'],
+        ['build', '--manifest-path', cratePath, '--target', 'wasm32-wasip2', '--release'],
         root,
       );
       const wasmName = `${cdylib.name.replaceAll('-', '_')}.wasm`;
-      const wasmPath = join(metadata.target_directory, 'wasm32-unknown-unknown', 'release', wasmName);
+      const wasmPath = join(metadata.target_directory, 'wasm32-wasip2', 'release', wasmName);
       const wasm = await readFile(wasmPath);
-      const exports = WebAssembly.Module.exports(new WebAssembly.Module(wasm)).map(
-        (item) => item.name,
-      );
-      for (const required of ['memory', 'alloc', 'dealloc', 'plugin_handle']) {
-        if (!exports.includes(required)) throw new Error(`Plugin WASM does not export ${required}`);
+      const componentHeader = [0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00];
+      if (!componentHeader.every((byte, index) => wasm[index] === byte)) {
+        throw new Error('Plugin entry must be a WebAssembly Component built for wasm32-wasip2');
       }
       await mkdir(buildRoot, { recursive: true });
       await cp(manifestPath, join(buildRoot, 'manifest.json'));

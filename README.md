@@ -37,4 +37,4 @@ impl Plugin for MyPlugin {
 export_plugin!(MyPlugin);
 ```
 
-`vite build` builds the UI, compiles the Rust crate for `wasm32-unknown-unknown`, validates the plugin manifest, and creates a reproducible `.yrplugin` archive.
+`vite build` builds the UI, compiles the Rust crate as a WIT Component for `wasm32-wasip2`, validates the plugin manifest, and creates a reproducible `.yrplugin` archive.

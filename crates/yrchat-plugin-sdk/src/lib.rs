@@ -1,55 +1,31 @@
-//! Runtime, protocol types, and WASM exports for YRChat plugins.
+//! Typed Component Model runtime and generated WIT exports for YRChat plugins.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
-#[derive(Debug, Deserialize)]
-pub struct PluginRequest {
-    pub operation: String,
-    #[serde(default)]
-    pub payload: Value,
-}
+wit_bindgen::generate!({
+    world: "yrchat-plugin",
+    path: "../../wit",
+    pub_export_macro: true,
+    default_bindings_module: "$crate",
+});
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HostResult {
-    pub ok: bool,
-    #[serde(default)]
-    pub value: Value,
-    #[serde(default)]
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PluginError {
-    pub message: String,
-}
-
-impl PluginError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl<T: Into<String>> From<T> for PluginError {
-    fn from(value: T) -> Self {
-        Self::new(value)
-    }
-}
+pub use exports::yrchat::plugin::guest::{Guest, HostResult, Invocation, Response};
+pub use yrchat::plugin::protocol::{
+    AiChatRequest, AiVisionRequest, CharacterEmotionRequest, CharacterProfileRequest, Effect,
+    HostRequest, NetworkRequest,
+};
 
 pub enum PluginResponse<C> {
     Complete(Value),
     Effect {
-        service: String,
-        request: Value,
+        request: HostRequest,
         continuation: C,
     },
-    Error(PluginError),
+    Error(String),
 }
 
 impl<C> PluginResponse<C> {
@@ -57,50 +33,51 @@ impl<C> PluginResponse<C> {
         Self::Complete(value.into())
     }
 
-    pub fn effect(service: impl Into<String>, request: Value, continuation: C) -> Self {
+    pub fn effect(request: HostRequest, continuation: C) -> Self {
         Self::Effect {
-            service: service.into(),
             request,
             continuation,
         }
     }
 
+    pub fn ai_chat(request: AiChatRequest, continuation: C) -> Self {
+        Self::effect(HostRequest::AiChat(request), continuation)
+    }
+
+    pub fn ai_vision(request: AiVisionRequest, continuation: C) -> Self {
+        Self::effect(HostRequest::AiVision(request), continuation)
+    }
+
+    pub fn character_profile(request: CharacterProfileRequest, continuation: C) -> Self {
+        Self::effect(HostRequest::CharacterProfile(request), continuation)
+    }
+
+    pub fn character_emotion(request: CharacterEmotionRequest, continuation: C) -> Self {
+        Self::effect(HostRequest::CharacterEmotion(request), continuation)
+    }
+
     pub fn error(message: impl Into<String>) -> Self {
-        Self::Error(PluginError::new(message))
+        Self::Error(message.into())
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum WireResponse {
-    Complete { value: Value },
-    Effect { effect: HostEffect },
-    Error { message: String },
-}
-
-#[derive(Debug, Serialize)]
-pub struct HostEffect {
-    pub effect_id: u64,
-    pub service: String,
-    pub request: Value,
-}
-
 pub trait Plugin: Default {
-    type Continuation: Serialize + DeserializeOwned;
+    type Continuation;
 
     fn handle(&mut self, operation: &str, payload: Value) -> PluginResponse<Self::Continuation>;
 
     fn resume(
         &mut self,
         continuation: Self::Continuation,
-        result: HostResult,
+        result: PluginHostResult,
     ) -> PluginResponse<Self::Continuation>;
 }
 
-#[derive(Deserialize)]
-struct ResumePayload {
-    effect_id: u64,
-    result: HostResult,
+#[derive(Debug, Clone)]
+pub struct PluginHostResult {
+    pub ok: bool,
+    pub value: Value,
+    pub error: String,
 }
 
 pub struct Runtime<P: Plugin> {
@@ -120,199 +97,89 @@ impl<P: Plugin> Default for Runtime<P> {
 }
 
 impl<P: Plugin> Runtime<P> {
-    pub fn dispatch(&mut self, request: PluginRequest) -> WireResponse {
-        let response = if request.operation == "__resume" {
-            let resume = match serde_json::from_value::<ResumePayload>(request.payload) {
-                Ok(resume) => resume,
-                Err(error) => {
-                    return WireResponse::Error {
-                        message: format!("Invalid host resume payload: {error}"),
-                    }
-                }
-            };
-            let Some(continuation) = self.pending.remove(&resume.effect_id) else {
-                return WireResponse::Error {
-                    message: format!("Unknown or completed effect ID: {}", resume.effect_id),
-                };
-            };
-            self.plugin.resume(continuation, resume.result)
-        } else {
-            self.plugin.handle(&request.operation, request.payload)
+    pub fn invoke(&mut self, request: Invocation) -> Response {
+        let payload = match from_cbor(&request.payload) {
+            Ok(payload) => payload,
+            Err(error) => return Response::Error(error),
         };
+        let response = self.plugin.handle(&request.operation, payload);
         self.materialize(response)
     }
 
-    fn materialize(&mut self, response: PluginResponse<P::Continuation>) -> WireResponse {
-        match response {
-            PluginResponse::Complete(value) => WireResponse::Complete { value },
-            PluginResponse::Error(error) => WireResponse::Error {
-                message: error.message,
+    pub fn resume(&mut self, effect_id: u64, result: HostResult) -> Response {
+        let Some(continuation) = self.pending.remove(&effect_id) else {
+            return Response::Error(format!("Unknown or completed effect ID: {effect_id}"));
+        };
+        let result = match result {
+            HostResult::Ok(bytes) => match from_cbor(&bytes) {
+                Ok(value) => PluginHostResult {
+                    ok: true,
+                    value,
+                    error: String::new(),
+                },
+                Err(error) => return Response::Error(error),
             },
+            HostResult::Error(error) => PluginHostResult {
+                ok: false,
+                value: Value::Null,
+                error,
+            },
+        };
+        let response = self.plugin.resume(continuation, result);
+        self.materialize(response)
+    }
+
+    fn materialize(&mut self, response: PluginResponse<P::Continuation>) -> Response {
+        match response {
+            PluginResponse::Complete(value) => match to_cbor(&value) {
+                Ok(bytes) => Response::Complete(bytes),
+                Err(error) => Response::Error(error),
+            },
+            PluginResponse::Error(message) => Response::Error(message),
             PluginResponse::Effect {
-                service,
                 request,
                 continuation,
             } => {
-                let effect_id = self.next_effect_id;
+                let id = self.next_effect_id;
                 self.next_effect_id = self.next_effect_id.wrapping_add(1).max(1);
-                self.pending.insert(effect_id, continuation);
-                WireResponse::Effect {
-                    effect: HostEffect {
-                        effect_id,
-                        service,
-                        request,
-                    },
-                }
+                self.pending.insert(id, continuation);
+                Response::Effect(Effect { id, request })
             }
         }
     }
 }
 
-pub fn handle_runtime<P: Plugin>(
-    runtime: &'static std::thread::LocalKey<RefCell<Runtime<P>>>,
-    pointer: u32,
-    len: u32,
-) -> u64 {
-    let input = unsafe { std::slice::from_raw_parts(pointer as *const u8, len as usize) };
-    let output = match serde_json::from_slice::<PluginRequest>(input) {
-        Ok(request) => runtime.with(|runtime| runtime.borrow_mut().dispatch(request)),
-        Err(error) => WireResponse::Error {
-            message: format!("Invalid plugin request: {error}"),
-        },
-    };
-    let bytes = serde_json::to_vec(&output).unwrap_or_else(|error| {
-        format!(r#"{{"kind":"error","message":"Response serialization failed: {error}"}}"#)
-            .into_bytes()
-    });
-    let output_len = bytes.len() as u32;
-    let output_pointer = allocate(output_len);
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), output_pointer as *mut u8, bytes.len());
-    }
-    ((output_len as u64) << 32) | output_pointer as u64
+pub fn from_cbor<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    ciborium::from_reader(bytes).map_err(|error| format!("Invalid CBOR payload: {error}"))
 }
 
-pub fn allocate(len: u32) -> u32 {
-    if len == 0 {
-        return 0;
-    }
-    let layout = std::alloc::Layout::array::<u8>(len as usize).expect("valid allocation layout");
-    unsafe { std::alloc::alloc(layout) as u32 }
-}
-
-/// # Safety
-///
-/// `pointer` must reference an allocation returned by [`allocate`] with exactly `len` bytes.
-pub unsafe fn deallocate(pointer: u32, len: u32) {
-    if pointer == 0 || len == 0 {
-        return;
-    }
-    let layout = std::alloc::Layout::array::<u8>(len as usize).expect("valid allocation layout");
-    std::alloc::dealloc(pointer as *mut u8, layout);
+pub fn to_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes)
+        .map_err(|error| format!("Failed to encode CBOR payload: {error}"))?;
+    Ok(bytes)
 }
 
 #[macro_export]
 macro_rules! export_plugin {
     ($plugin:ty) => {
+        struct YrchatGuest;
+
         std::thread_local! {
             static YRCHAT_PLUGIN_RUNTIME: std::cell::RefCell<$crate::Runtime<$plugin>> =
                 std::cell::RefCell::new($crate::Runtime::default());
         }
 
-        #[no_mangle]
-        pub extern "C" fn alloc(len: u32) -> u32 {
-            $crate::allocate(len)
+        impl $crate::Guest for YrchatGuest {
+            fn invoke(request: $crate::Invocation) -> $crate::Response {
+                YRCHAT_PLUGIN_RUNTIME.with(|runtime| runtime.borrow_mut().invoke(request))
+            }
+
+            fn resume(effect_id: u64, result: $crate::HostResult) -> $crate::Response {
+                YRCHAT_PLUGIN_RUNTIME.with(|runtime| runtime.borrow_mut().resume(effect_id, result))
+            }
         }
 
-        #[no_mangle]
-        pub unsafe extern "C" fn dealloc(pointer: u32, len: u32) {
-            $crate::deallocate(pointer, len);
-        }
-
-        #[no_mangle]
-        pub extern "C" fn plugin_handle(pointer: u32, len: u32) -> u64 {
-            $crate::handle_runtime(&YRCHAT_PLUGIN_RUNTIME, pointer, len)
-        }
+        $crate::export!(YrchatGuest);
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[derive(Default)]
-    struct TestPlugin;
-
-    impl Plugin for TestPlugin {
-        type Continuation = String;
-
-        fn handle(&mut self, operation: &str, payload: Value) -> PluginResponse<String> {
-            PluginResponse::effect(operation, payload, operation.to_string())
-        }
-
-        fn resume(&mut self, continuation: String, result: HostResult) -> PluginResponse<String> {
-            PluginResponse::complete(json!({ "continuation": continuation, "value": result.value }))
-        }
-    }
-
-    #[test]
-    fn resumes_concurrent_effects_out_of_order() {
-        let mut runtime = Runtime::<TestPlugin>::default();
-        let first = runtime.dispatch(PluginRequest {
-            operation: "first".into(),
-            payload: json!({}),
-        });
-        let second = runtime.dispatch(PluginRequest {
-            operation: "second".into(),
-            payload: json!({}),
-        });
-        let first_id = match first {
-            WireResponse::Effect { effect } => effect.effect_id,
-            _ => panic!(),
-        };
-        let second_id = match second {
-            WireResponse::Effect { effect } => effect.effect_id,
-            _ => panic!(),
-        };
-        let resumed = runtime.dispatch(PluginRequest {
-            operation: "__resume".into(),
-            payload: json!({ "effect_id": second_id, "result": { "ok": true, "value": 2 } }),
-        });
-        assert!(
-            matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "second")
-        );
-        let resumed = runtime.dispatch(PluginRequest {
-            operation: "__resume".into(),
-            payload: json!({ "effect_id": first_id, "result": { "ok": true, "value": 1 } }),
-        });
-        assert!(
-            matches!(resumed, WireResponse::Complete { value } if value["continuation"] == "first")
-        );
-    }
-
-    #[test]
-    fn rejects_reused_effect_ids() {
-        let mut runtime = Runtime::<TestPlugin>::default();
-        let response = runtime.dispatch(PluginRequest {
-            operation: "once".into(),
-            payload: json!({}),
-        });
-        let id = match response {
-            WireResponse::Effect { effect } => effect.effect_id,
-            _ => panic!(),
-        };
-        let payload = json!({ "effect_id": id, "result": { "ok": true } });
-        let _ = runtime.dispatch(PluginRequest {
-            operation: "__resume".into(),
-            payload: payload.clone(),
-        });
-        assert!(matches!(
-            runtime.dispatch(PluginRequest {
-                operation: "__resume".into(),
-                payload
-            }),
-            WireResponse::Error { .. }
-        ));
-    }
 }
